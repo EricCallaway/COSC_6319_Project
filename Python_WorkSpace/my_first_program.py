@@ -14,6 +14,7 @@ print(favorite_language.lstrip())
 print(favorite_language.strip())
 
 print(5+3)
+print(5+333)
 print(5*3)
 print(5**3)
 # Say hello
