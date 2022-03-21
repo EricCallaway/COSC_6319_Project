@@ -68,6 +68,7 @@ def open_file():
         else:
             f = open(file_path.name, "r")
             content= f.read()
+        
         # Lowercase text
         content = text_lowercase(content)
 
@@ -127,5 +128,6 @@ upld = Button(
     command=uploadFiles
     )
 upld.grid(row=5, columnspan=3, pady=10)
+
 
 ws.mainloop()
