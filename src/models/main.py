@@ -1,6 +1,5 @@
 import create_window as cw
-from input_gather import return_file as rf, return_url as ru
-
+from data_cleaning import data_clean as dc
 
 def main():
     cw.mainloop()
