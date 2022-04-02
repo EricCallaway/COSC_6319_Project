@@ -3,7 +3,6 @@ from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
-from split_data import split_data as sd
 import pandas as pd
 import re
 import pickle
@@ -55,6 +54,7 @@ def data_clean(data, pkl_path):
             sentences.append(sent)
             pickle.dump(sent, open(clean_data_path, 'wb'))
         data_frames.append(vectorize_sentence(sentences, pkl_path))
+        print('test')
 
     # Splits data into a training set and a testing set for the model.
     x_train, x_test = train_test_split(data_frames, train_size=0.80, random_state=1)
