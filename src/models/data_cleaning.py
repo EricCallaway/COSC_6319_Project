@@ -55,7 +55,6 @@ def single_data_clean(data, pkl_path):
 
 def data_clean(data, pkl_path):
     data_frames = []
-    sentences = []
     base = os.path.basename(pkl_path)
     clean_data_path = pkl_path.replace(base, 'clean_data.pkl')
     for rec in data:
@@ -65,7 +64,7 @@ def data_clean(data, pkl_path):
         file_data.close()
         # Tokenize text into words
         tokens = sent_tokenize(text)
-        
+        sentences = []
         for sentence in tokens:
             temp = str(clean_sentence(sentence))
             sent = re.sub(r"[\([{})',\]]", "", temp)
