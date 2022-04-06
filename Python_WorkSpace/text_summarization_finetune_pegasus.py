@@ -1,6 +1,8 @@
 import torch
 from transformers import PegasusForConditionalGeneration, PegasusTokenizer, Trainer, TrainingArguments
-from datasets import load_dataset
+from datasets import load_dataset,load_metric
+import nltk
+import numpy as np
 
 class PegasusDataset(torch.utils.data.Dataset):
     def __init__(self, encodings, labels):
@@ -36,6 +38,38 @@ def prepare_data(model_name,
 
   return train_dataset, val_dataset, test_dataset, tokenizer
 
+# Metric
+metric = load_metric("rouge")
+
+def postprocess_text(preds, labels):
+    preds = [pred.strip() for pred in preds]
+    labels = [label.strip() for label in labels]
+
+    # rougeLSum expects newline after each sentence
+    preds = ["\n".join(nltk.sent_tokenize(pred)) for pred in preds]
+    labels = ["\n".join(nltk.sent_tokenize(label)) for label in labels]
+
+    return preds, labels
+
+def compute_metrics(eval_preds):
+    preds, labels = eval_preds
+    if isinstance(preds, tuple):
+      preds = preds[0]
+    decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+    # Some simple post-processing
+    decoded_preds, decoded_labels = postprocess_text(decoded_preds, decoded_labels)
+
+    result = metric.compute(predictions=decoded_preds, references=decoded_labels, use_stemmer=True)
+    # Extract a few results from ROUGE
+    result = {key: value.mid.fmeasure * 100 for key, value in result.items()}
+
+    prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
+    result["gen_len"] = np.mean(prediction_lens)
+    result = {k: round(v, 4) for k, v in result.items()}
+    return result
+
 
 def prepare_fine_tuning(model_name, tokenizer, train_dataset, val_dataset=None, output_dir='./results'):
   # Prepare configurations and base model for fine-tuning
@@ -45,7 +79,7 @@ def prepare_fine_tuning(model_name, tokenizer, train_dataset, val_dataset=None, 
   if val_dataset is not None:
     training_args = TrainingArguments(
       output_dir=output_dir,           # output directory
-      num_train_epochs=2000,           # total number of training epochs
+      num_train_epochs=3,           # total number of training epochs
       per_device_train_batch_size=1,   # batch size per device during training, can increase if memory allows
       per_device_eval_batch_size=1,    # batch size for evaluation, can increase if memory allows
       save_steps=500,                  # number of updates steps before checkpoint saves
@@ -55,7 +89,7 @@ def prepare_fine_tuning(model_name, tokenizer, train_dataset, val_dataset=None, 
       warmup_steps=500,                # number of warmup steps for learning rate scheduler
       weight_decay=0.01,               # strength of weight decay
       logging_dir='./logs',            # directory for storing logs
-      logging_steps=10,
+      logging_steps=10
     )
 
     trainer = Trainer(
@@ -63,39 +97,59 @@ def prepare_fine_tuning(model_name, tokenizer, train_dataset, val_dataset=None, 
       args=training_args,                  # training arguments, defined above
       train_dataset=train_dataset,         # training dataset
       eval_dataset=val_dataset,            # evaluation dataset
-      tokenizer=tokenizer
+      tokenizer=tokenizer,
+      compute_metrics=compute_metrics
     )
 
   else:
     training_args = TrainingArguments(
       output_dir=output_dir,           # output directory
-      num_train_epochs=2000,           # total number of training epochs
+      num_train_epochs=3,           # total number of training epochs
       per_device_train_batch_size=1,   # batch size per device during training, can increase if memory allows
       save_steps=500,                  # number of updates steps before checkpoint saves
       save_total_limit=5,              # limit the total amount of checkpoints and deletes the older checkpoints
       warmup_steps=500,                # number of warmup steps for learning rate scheduler
       weight_decay=0.01,               # strength of weight decay
       logging_dir='./logs',            # directory for storing logs
-      logging_steps=10,
+      logging_steps=10
     )
 
     trainer = Trainer(
       model=model,                         # the instantiated 🤗 Transformers model to be trained
       args=training_args,                  # training arguments, defined above
       train_dataset=train_dataset,         # training dataset
-      tokenizer=tokenizer
+      tokenizer=tokenizer,
+      compute_metrics=compute_metrics
     )
 
   return trainer
 
-
 if __name__=='__main__':
-  # use XSum dataset as example, with first 1000 docs as training data
-  dataset = load_dataset("xsum")
-  train_texts, train_labels = dataset['train']['document'][:1000], dataset['train']['summary'][:1000]
+  # use govreport-summarization dataset as example, with first 1000 docs as training data
+  dataset = load_dataset("ccdv/govreport-summarization")
+  train_report, train_summary, val_report, val_summary, test_report, test_summary = dataset['train']['report'][:1000], dataset['train']['summary'][:1000],dataset['validation']['report'], dataset['validation']['summary'],dataset['test']['report'], dataset['test']['summary']
   
   # use Pegasus xsum model as base for fine-tuning
   model_name = 'google/pegasus-large'
-  train_dataset,_, _, tokenizer = prepare_data(model_name, train_texts, train_labels)
-  trainer = prepare_fine_tuning(model_name, tokenizer, train_dataset)
-  trainer.train()
+  train_dataset,val_dataset, test_dataset, tokenizer = prepare_data(model_name, train_report, train_summary, val_report, val_summary, test_report, test_summary)
+  
+  # Training
+  trainer = prepare_fine_tuning(model_name, tokenizer, train_dataset,val_dataset)
+  train_result = trainer.train()
+  trainer.save_model()  # Saves the tokenizer too for easy upload
+
+  metrics = train_result.metrics
+  trainer.log_metrics("train", metrics)
+  trainer.save_metrics("train", metrics)
+  trainer.save_state()
+
+  # Evaluation
+  metrics = trainer.evaluate(num_beams=3, metric_key_prefix="eval")
+  trainer.log_metrics("eval", metrics)
+  trainer.save_metrics("eval", metrics)
+
+  # Predict
+  predict_results = trainer.predict(test_dataset, metric_key_prefix="predict", num_beams=3)
+  metrics = predict_results.metrics
+  trainer.log_metrics("predict", metrics)
+  trainer.save_metrics("predict", metrics)
